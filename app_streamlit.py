@@ -201,16 +201,30 @@ def main() -> None:
         spot_series = get_spot_series(df)
         data_summary = get_data_summary(df)
 
+    def handle_mode_change() -> None:
+        keys_to_clear = [
+            "principal_try",
+            "principal_usd",
+            "entry_bank_rate_try_to_usd",
+            "entry_bank_rate_usd_to_try",
+            "include_swift_in_baseline",
+        ]
+        for key in keys_to_clear:
+            st.session_state.pop(key, None)
+
     with st.sidebar:
         st.header("Trade Parameters")
 
         mode = st.radio(
             "Mode",
             options=[
-                "START WITH TRY (TRY-holder)",
-                "START WITH USD (USD-holder)",
+                " START WITH TRY (TRY-holder)",
+                " START WITH USD (USD-holder)",
             ],
+            key="mode_selection",
+            on_change=handle_mode_change,
         )
+        mode = st.session_state["mode_selection"]
 
         start_date = st.date_input("Start Date", value=date.today())
         term_days = st.number_input(
@@ -265,6 +279,7 @@ def main() -> None:
                 max_value=100_000_000,
                 step=10_000,
                 format="%d",
+                key="principal_try",
             )
             entry_bank_rate_try_to_usd = st.number_input(
                 "Entry Bank Rate TRY to USD",
@@ -274,10 +289,12 @@ def main() -> None:
                 step=0.01,
                 format="%.4f",
                 help="Executable rate for TRY to USD at entry",
+                key="entry_bank_rate_try_to_usd",
             )
             include_swift_in_baseline = st.checkbox(
                 "Subtract SWIFT fee from USD baseline",
                 value=False,
+                key="include_swift_in_baseline",
             )
         else:
             principal_usd = st.number_input(
@@ -287,6 +304,7 @@ def main() -> None:
                 max_value=10_000_000,
                 step=500,
                 format="%d",
+                key="principal_usd",
             )
             entry_bank_rate_usd_to_try = st.number_input(
                 "Entry Bank Rate USD to TRY",
@@ -296,6 +314,7 @@ def main() -> None:
                 step=0.01,
                 format="%.4f",
                 help="Bank buy rate for USD to TRY",
+                key="entry_bank_rate_usd_to_try",
             )
             include_swift_in_baseline = False
 
@@ -872,4 +891,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
