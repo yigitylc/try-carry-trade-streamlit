@@ -275,7 +275,6 @@ def get_regime_options() -> dict:
         '3 Years': 1095,
         '4 Years': 1460,
         '5 Years': 1825,
-        'Max Available': None,
     }
 
 
@@ -309,7 +308,7 @@ def validate_data_sufficiency(
 
     if not result['sufficient']:
         # Find fallback
-        fallbacks = [730, 1095, 1825, None]  # 2Y, 3Y, 5Y, MAX
+        fallbacks = [730, 1095, 1460, 1825]  # 2Y, 3Y, 4Y, 5Y
         for fb in fallbacks:
             if fb == regime_days:
                 continue
