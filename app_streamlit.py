@@ -65,6 +65,11 @@ from realtime_analysis import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+MODE_OPTIONS = [
+    "I START WITH TRY (TRY-holder)",
+    "I START WITH USD (USD-holder)",
+]
+
 st.set_page_config(
     page_title="TRY Carry Trade Dashboard",
     page_icon="TRY",
@@ -220,6 +225,7 @@ def main() -> None:
 
         mode = st.radio(
             "Mode",
+            options=MODE_OPTIONS,
             options=[
                 "I START WITH TRY (TRY-holder)",
                 "I START WITH USD (USD-holder)",
