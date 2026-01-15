@@ -9,17 +9,19 @@ Features:
 - Acceleration (change in slope)
 - Daily cushion calculation
 - Forward expected return adjustment
+- DUAL MODE support (TRY Holder / USD Holder)
 """
 
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, Union
 from dataclasses import dataclass
 import warnings
 warnings.filterwarnings('ignore')
 
 from dashboard_core import TradeMetrics, CarryTradeModel
+from dashboard_core import TradeParams, TRYHolderParams, USDHolderParams, CarryTradeModel
 
 
 @dataclass
@@ -157,9 +159,14 @@ def fetch_entry_and_current(
 def compute_realtime_pnl(
     metrics: TradeMetrics,
     spot_series: pd.Series
+    params: Union[TradeParams, TRYHolderParams, USDHolderParams],
+    spot_series: pd.Series,
+    entry_date: str = "2025-12-19"
 ) -> RealTimePnL:
     """
     Compute real-time P&L from entry to now.
+
+    Supports both TRY Holder and USD Holder modes.
     """
     entry_dt = pd.Timestamp(metrics.start_date)
     if spot_series.index.tz is not None:
@@ -332,12 +339,14 @@ def compute_trend_analysis(
 
 def compute_daily_cushion(
     metrics: TradeMetrics,
+    params: Union[TradeParams, TRYHolderParams, USDHolderParams],
     current_spot: float,
     days_remaining: int,
     trend: TrendAnalysis
 ) -> DailyCushion:
     """
     Compute daily cushion - how much TRY can depreciate per day before break-even.
+    Supports both TRY Holder and USD Holder modes.
     """
     spot_be = metrics.spot_be
 
@@ -399,6 +408,80 @@ def generate_realtime_report(
     pnl: RealTimePnL,
     trend: TrendAnalysis,
     cushion: DailyCushion
+def compute_adjusted_expected_return(
+    params: Union[TradeParams, TRYHolderParams, USDHolderParams],
+    trend: TrendAnalysis,
+    base_mc_results: Dict,
+    days_remaining: int
+) -> Dict:
+    """
+    Adjust expected return based on current trend/acceleration.
+
+    Method: Blend historical calibration with recent trend momentum.
+    Supports both TRY Holder and USD Holder modes.
+    """
+    # Base expected return from MC
+    base_expected = base_mc_results.get('mean_excess', 0)
+    base_prob_under = base_mc_results.get('prob_underperform_tbill', 50)
+
+    # Trend-adjusted drift
+    # If recent trend is stronger than historical mean, adjust
+    historical_mu = base_mc_results.get('mu_annual', 0.18)  # ~18% default
+    recent_mu = trend.slope_annual / params.spot_entry if params.spot_entry > 0 else 0
+
+    # Blend: weight recent trend more if R-squared is high
+    r2 = trend.r_squared
+    blended_mu = historical_mu * (1 - r2 * 0.5) + recent_mu * (r2 * 0.5)
+
+    # Acceleration adjustment
+    # If accelerating, expect worse outcomes
+    accel_factor = 1.0
+    if trend.accel_regime == "ACCELERATING":
+        accel_factor = 1.2  # 20% worse expected outcome
+    elif trend.accel_regime == "DECELERATING":
+        accel_factor = 0.8  # 20% better
+
+    # Adjusted expected return
+    # Project spot at maturity using blended drift
+    T = days_remaining / 365
+    projected_spot_drift = params.spot_entry * np.exp(blended_mu * T)
+
+    # Compute outcome at projected spot
+    model = CarryTradeModel(params)
+    outcome_projected = model.compute_outcome(projected_spot_drift)
+
+    # Apply acceleration factor to the excess return
+    adjusted_excess = outcome_projected.excess_ret_vs_tbill / accel_factor
+
+    # Adjusted probability (heuristic based on cushion)
+    cushion_factor = (params.spot_be - params.spot_entry) / params.spot_entry
+    trend_factor = trend.projected_move_pct / 100
+
+    if trend_factor > cushion_factor:
+        # Trend projects past break-even
+        adjusted_prob_under = min(95, base_prob_under * 1.3)
+    else:
+        adjusted_prob_under = base_prob_under
+
+    return {
+        'base_expected_excess': base_expected,
+        'adjusted_expected_excess': adjusted_excess,
+        'adjustment_factor': accel_factor,
+        'blended_mu_annual': blended_mu * 100,
+        'historical_mu_annual': historical_mu * 100,
+        'recent_mu_annual': recent_mu * 100,
+        'base_prob_underperform': base_prob_under,
+        'adjusted_prob_underperform': adjusted_prob_under,
+        'projected_spot_at_maturity': projected_spot_drift,
+        'trend_contribution': trend.projected_move_pct,
+    }
+
+
+def generate_realtime_report(
+    pnl: RealTimePnL,
+    trend: TrendAnalysis,
+    cushion: DailyCushion,
+    adjusted: Optional[Dict] = None
 ) -> str:
     """Generate comprehensive real-time analysis report."""
 

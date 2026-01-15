@@ -899,6 +899,24 @@ def create_trend_chart(spot_series: pd.Series, trend_data: dict, days_remaining:
         height=400,
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
     )
+    # Calculate Y-axis range to include all points (historical, trend, projection)
+    all_y_values = list(recent.values) + list(trend_y) + projection_spots
+    y_min = min(all_y_values) * 0.995
+    y_max = max(all_y_values) * 1.005
+
+    fig.update_layout(
+        title={
+            'text': f"Trend Analysis (R²={trend_data['r_squared']:.3f})<br>"
+                    f"<sub>Slope: {trend_data['slope_pct_daily']:.3f}%/day | "
+                    f"Regime: <span style='color:{accel_color}'>{trend_data['accel_regime']}</span></sub>",
+            'font': {'size': 14},
+        },
+        xaxis_title='Date',
+        yaxis_title='USD/TRY',
+        yaxis_range=[y_min, y_max],
+        height=400,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+    )
 
     return apply_dark_theme(fig)
 
@@ -954,6 +972,10 @@ def create_cushion_gauge(cushion_data: dict) -> go.Figure:
 def create_cushion_timeline(cushion_data: dict, trend_data: dict) -> go.Figure:
     """
     Create timeline showing cushion erosion at current trend.
+
+    Handles cases where:
+    - days_to_be > days_remaining (BE beyond maturity - extend x-axis)
+    - days_to_be < days_remaining (BE before maturity - show clearly)
     """
     days_remaining = cushion_data['days_remaining']
     current_spot = cushion_data['spot_current']
@@ -967,11 +989,26 @@ def create_cushion_timeline(cushion_data: dict, trend_data: dict) -> go.Figure:
         max_day = max(max_day, int(np.ceil(days_to_be)))
     max_day += 5
     days = list(range(0, max_day + 1))
+    days_remaining = cushion_data['days_remaining']
+    current_spot = cushion_data['spot_current']
+    spot_be = cushion_data['spot_be']
+    daily_move = trend_data['slope_daily']
+    days_to_be = cushion_data['days_until_breakeven']
+
+    # Determine x-axis range: extend to include BE day if needed
+    if days_to_be < float('inf') and days_to_be > 0:
+        # If BE is beyond maturity, extend x-axis to show it
+        x_max = max(days_remaining + 5, int(days_to_be) + 5)
+    else:
+        x_max = days_remaining + 5
+
+    # Generate projection
+    days = list(range(0, x_max + 1))
     projected_spots = [current_spot + daily_move * d for d in days]
 
     fig = go.Figure()
 
-    # Projected path
+    # Projected path - color based on whether above or below BE
     colors = [COLORS['profit'] if s < spot_be else COLORS['loss'] for s in projected_spots]
 
     fig.add_trace(go.Scatter(
@@ -980,7 +1017,8 @@ def create_cushion_timeline(cushion_data: dict, trend_data: dict) -> go.Figure:
         mode='lines+markers',
         name='Projected Spot',
         line=dict(color=COLORS['neutral'], width=2),
-        marker=dict(color=colors, size=8),
+        marker=dict(color=colors, size=6),
+        hovertemplate='Day %{x}<br>Projected: %{y:.4f}<extra></extra>',
     ))
 
     # Break-even line
@@ -993,6 +1031,14 @@ def create_cushion_timeline(cushion_data: dict, trend_data: dict) -> go.Figure:
         text=f"Break-even: {spot_be:.4f}",
         showarrow=False,
         font=dict(color=COLORS['breakeven']),
+    )
+    # Break-even line (always visible - key requirement)
+    fig.add_hline(
+        y=spot_be,
+        line_dash="dash",
+        line_color=COLORS['breakeven'],
+        annotation_text=f"Break-even: {spot_be:.4f}",
+        annotation_position="right",
     )
 
     # Maturity line
@@ -1036,6 +1082,49 @@ def create_cushion_timeline(cushion_data: dict, trend_data: dict) -> go.Figure:
         yaxis_title='Projected USD/TRY',
         xaxis_range=[0, max_day],
         yaxis_range=[y_min - padding, y_max + padding],
+        height=400,
+        showlegend=False,
+    )
+    be_annotation = ""
+    if days_to_be < float('inf') and days_to_be > 0:
+        if days_to_be > days_remaining:
+            # BE beyond maturity - still show it
+            be_annotation = f" (BE beyond maturity: Day {days_to_be:.0f})"
+            fig.add_vline(
+                x=days_to_be,
+                line_dash="dot",
+                line_color=COLORS['loss'],
+                annotation_text=f"Hits BE: Day {days_to_be:.0f}",
+                annotation_position="top",
+            )
+        else:
+            # BE before maturity - show prominently
+            fig.add_vline(
+                x=days_to_be,
+                line_dash="dot",
+                line_color=COLORS['loss'],
+                annotation_text=f"DANGER: Hits BE Day {days_to_be:.0f}",
+                annotation_position="top",
+            )
+    elif days_to_be == float('inf') and daily_move <= 0:
+        be_annotation = " (Favorable trend - never hits BE)"
+
+    # Calculate Y-axis range to include break-even and all projected spots
+    # Ensure adequate padding so lines are never clipped
+    all_y_values = projected_spots + [spot_be, current_spot]
+    y_min = min(all_y_values) * 0.995
+    y_max = max(all_y_values) * 1.005
+
+    fig.update_layout(
+        title={
+            'text': f"Cushion Erosion at Current Trend<br>"
+                    f"<sub>Daily Cushion: {cushion_data['daily_cushion_pct']:.3f}%/day | "
+                    f"Daily Trend: {trend_data['slope_pct_daily']:.3f}%/day{be_annotation}</sub>",
+            'font': {'size': 14},
+        },
+        xaxis_title='Days from Now',
+        yaxis_title='Projected USD/TRY',
+        yaxis_range=[y_min, y_max],
         height=400,
         showlegend=False,
     )
@@ -1093,6 +1182,130 @@ def create_realtime_kpi_html(pnl_data: dict, cushion_data: dict, trend_data: dic
 
     html += '</div>'
     return html
+
+
+def create_rolling_volatility_chart(vol_df: pd.DataFrame, spot_series: pd.Series) -> go.Figure:
+    """
+    Create rolling volatility chart with regime classification.
+
+    Args:
+        vol_df: DataFrame with 'rolling_vol', 'regime', 'vol_33_threshold', 'vol_67_threshold'
+        spot_series: Spot price series for dual-axis
+
+    Returns:
+        Plotly figure with rolling vol and regime bands
+    """
+    fig = make_subplots(
+        rows=2, cols=1,
+        row_heights=[0.7, 0.3],
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=("Rolling 60-Day Annualized Volatility", "USD/TRY Spot")
+    )
+
+    # Get thresholds
+    vol_33 = vol_df['vol_33_threshold'].iloc[0] if 'vol_33_threshold' in vol_df.columns else vol_df['rolling_vol'].quantile(0.33)
+    vol_67 = vol_df['vol_67_threshold'].iloc[0] if 'vol_67_threshold' in vol_df.columns else vol_df['rolling_vol'].quantile(0.67)
+
+    # Regime colors
+    regime_colors = {
+        'LOW': COLORS['profit'],
+        'MEDIUM': COLORS['warning'],
+        'HIGH': COLORS['loss'],
+        None: COLORS['neutral'],
+    }
+
+    # Rolling volatility line with color by regime
+    valid_vol = vol_df['rolling_vol'].dropna()
+
+    for regime in ['LOW', 'MEDIUM', 'HIGH']:
+        mask = vol_df['regime'] == regime
+        if mask.any():
+            regime_data = vol_df[mask]
+            fig.add_trace(
+                go.Scatter(
+                    x=regime_data.index,
+                    y=regime_data['rolling_vol'],
+                    mode='markers',
+                    name=f'{regime} Vol',
+                    marker=dict(color=regime_colors[regime], size=4),
+                    hovertemplate='%{x}<br>Vol: %{y:.1f}%<br>Regime: ' + regime + '<extra></extra>',
+                    showlegend=True,
+                ),
+                row=1, col=1
+            )
+
+    # Add threshold lines
+    fig.add_hline(
+        y=vol_33,
+        line_dash="dash",
+        line_color=COLORS['profit'],
+        annotation_text=f"LOW/MED: {vol_33:.1f}%",
+        annotation_position="right",
+        row=1, col=1
+    )
+
+    fig.add_hline(
+        y=vol_67,
+        line_dash="dash",
+        line_color=COLORS['loss'],
+        annotation_text=f"MED/HIGH: {vol_67:.1f}%",
+        annotation_position="right",
+        row=1, col=1
+    )
+
+    # Current regime annotation
+    if len(valid_vol) > 0:
+        current_vol = valid_vol.iloc[-1]
+        current_regime = vol_df['regime'].iloc[-1]
+        fig.add_annotation(
+            x=valid_vol.index[-1],
+            y=current_vol,
+            text=f"Current: {current_vol:.1f}% ({current_regime})",
+            showarrow=True,
+            arrowhead=2,
+            arrowcolor=regime_colors.get(current_regime, COLORS['neutral']),
+            font=dict(color=regime_colors.get(current_regime, COLORS['neutral'])),
+            row=1, col=1
+        )
+
+    # Spot series (bottom panel)
+    spot_aligned = spot_series[spot_series.index.isin(vol_df.index)]
+    fig.add_trace(
+        go.Scatter(
+            x=spot_aligned.index,
+            y=spot_aligned.values,
+            mode='lines',
+            name='USD/TRY',
+            line=dict(color=COLORS['neutral'], width=1),
+            hovertemplate='%{x}<br>Spot: %{y:.4f}<extra></extra>',
+            showlegend=False,
+        ),
+        row=2, col=1
+    )
+
+    # Layout
+    fig.update_layout(
+        height=600,
+        title={
+            'text': "Volatility Regime Analysis<br>"
+                    f"<sub>33rd percentile: {vol_33:.1f}% | 67th percentile: {vol_67:.1f}%</sub>",
+            'font': {'size': 14},
+        },
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5
+        ),
+    )
+
+    fig.update_yaxes(title_text="Annualized Vol (%)", row=1, col=1)
+    fig.update_yaxes(title_text="USD/TRY", row=2, col=1)
+    fig.update_xaxes(title_text="Date", row=2, col=1)
+
+    return apply_dark_theme(fig)
 
 
 if __name__ == "__main__":
