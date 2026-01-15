@@ -218,8 +218,8 @@ def main() -> None:
         mode = st.radio(
             "Mode",
             options=[
-                "I START WITH TRY (TRY-holder)",
-                "I START WITH USD (USD-holder)",
+                " START WITH TRY (TRY-holder)",
+                " START WITH USD (USD-holder)",
             ],
             key="mode_selection",
             on_change=handle_mode_change,
