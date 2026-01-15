@@ -214,7 +214,7 @@ def generate_metrics_csv(params: Dict, mc_results: Dict, backtest: Dict = None) 
     rows = [
         ['Category', 'Metric', 'Value'],
         ['Trade', 'Principal TRY', params.get('principal_try', '')],
-        ['Trade', 'USD Invested (Executable)', params.get('usd0_exec', '')],
+        ['Trade', 'USD Baseline', params.get('usd0_baseline', '')],
         ['Trade', 'T-Bill End Value', params.get('usd_rf_end', '')],
         ['Trade', 'Break-even Spot', params.get('spot_be', '')],
         ['Trade', 'Break-even Move %', params.get('be_move_pct', '')],
@@ -242,14 +242,14 @@ def generate_metrics_csv(params: Dict, mc_results: Dict, backtest: Dict = None) 
 
 def format_regime_name(days: Optional[int]) -> str:
     """Format regime days as readable name."""
-    if days is None:
-        return "Max Available"
-    elif days == 365:
+    if days == 365:
         return "1 Year"
     elif days == 730:
         return "2 Years"
     elif days == 1095:
         return "3 Years"
+    elif days == 1460:
+        return "4 Years"
     elif days == 1825:
         return "5 Years"
     else:
@@ -265,10 +265,10 @@ def get_regime_days(name: str) -> Optional[int]:
         '2Y': 730,
         '3 Years': 1095,
         '3Y': 1095,
+        '4 Years': 1460,
+        '4Y': 1460,
         '5 Years': 1825,
         '5Y': 1825,
-        'Max Available': None,
-        'MAX': None,
     }
     return mapping.get(name)
 
@@ -283,11 +283,13 @@ def compute_trade_economics_summary(params: Dict) -> str:
         "=" * 60,
         "",
         "ENTRY",
-        f"  Principal:           {format_currency(params['principal_try'], 'TRY', 0)}",
+        f"  Mode:               {params['mode']}",
+        f"  Principal (TRY):     {format_currency(params['principal_try'], 'TRY', 0)}",
+        f"  Principal (USD):     {format_currency(params['principal_usd'])}",
         f"  Entry Spot:          {params['spot_entry']:.4f}",
         f"  Entry Bank Rate:     {params['entry_bank_rate']:.4f}",
-        f"  Spread:              {params['spread']*100:.2f}%",
-        f"  USD Executable:      {format_currency(params['usd0_exec'])}",
+        f"  Entry Spread:        {params['entry_spread']*100:.2f}%",
+        f"  USD Baseline:        {format_currency(params['usd0_baseline'])}",
         "",
         "DEPOSIT",
         f"  Rate (annual):       {params['deposit_rate_annual']*100:.2f}%",
