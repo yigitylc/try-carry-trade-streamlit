@@ -211,10 +211,18 @@ def main() -> None:
         ]
         for key in keys_to_clear:
             st.session_state.pop(key, None)
+        st.rerun()
 
     with st.sidebar:
         st.header("Trade Parameters")
 
+        st.session_state.setdefault("mode_selection", "I START WITH TRY (TRY-holder)")
+
+        mode = st.radio(
+            "Mode",
+            options=[
+                "I START WITH TRY (TRY-holder)",
+                "I START WITH USD (USD-holder)",
         mode = st.radio(
             "Mode",
             options=[
@@ -348,6 +356,7 @@ def main() -> None:
             max_value=100.0,
             value=32.50,
             step=2.5,
+            help="Applied on exit conversion for both TRY and USD holder modes.",
         )
 
         st.subheader("Calibration")
