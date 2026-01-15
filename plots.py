@@ -68,6 +68,7 @@ def create_scenario_chart(scenarios_df: pd.DataFrame, params: dict) -> go.Figure
     Create scenario analysis bar chart.
 
     Shows P/L vs Baseline and Excess vs T-Bill for each spot movement.
+    Shows P/L vs Baseline and Excess vs T-Bill for each spot movement.
     """
     fig = make_subplots(
         rows=2, cols=1,
@@ -75,11 +76,14 @@ def create_scenario_chart(scenarios_df: pd.DataFrame, params: dict) -> go.Figure
         vertical_spacing=0.12,
         subplot_titles=(
             'P/L vs Baseline at Entry ($)',
+            'P/L vs Baseline at Entry ($)',
             'Excess Return vs T-Bill (%)'
         )
     )
 
     # Colors based on profit/loss
+    colors_pnl = [COLORS['profit'] if x >= 0 else COLORS['loss']
+                  for x in scenarios_df['pnl_vs_baseline']]
     colors_pnl = [COLORS['profit'] if x >= 0 else COLORS['loss']
                   for x in scenarios_df['pnl_vs_baseline']]
     colors_excess = [COLORS['profit'] if x >= 0 else COLORS['loss']
@@ -89,6 +93,13 @@ def create_scenario_chart(scenarios_df: pd.DataFrame, params: dict) -> go.Figure
     fig.add_trace(
         go.Bar(
             x=scenarios_df['spot_move_pct'],
+            y=scenarios_df['pnl_vs_baseline'],
+            marker_color=colors_pnl,
+            name='P/L vs Baseline',
+            text=[f"${x:+,.0f}" for x in scenarios_df['pnl_vs_baseline']],
+            textposition='outside',
+            hovertemplate='Spot Move: %{x:.1f}%<br>P/L: $%{y:,.2f}<extra></extra>',
+        ),
             y=scenarios_df['pnl_vs_baseline'],
             marker_color=colors_pnl,
             name='P/L vs Baseline',
@@ -160,6 +171,18 @@ def create_payoff_diagram(params: dict, spot_range: tuple = None) -> go.Figure:
     spots = np.linspace(spot_range[0], spot_range[1], 200)
 
     # Calculate USD outcomes
+    exit_spread = params['exit_spread']
+    final_try = params['final_try']
+    swift_fee = params['swift_fee_usd']
+    usd0_exec = params['usd0_baseline']
+    usd_rf_end = params['usd_rf_end']
+    spot_be = params['spot_be']
+
+    usd_ends = []
+    for spot in spots:
+        bank_rate = spot * (1 + exit_spread)
+        usd_end = final_try / bank_rate - swift_fee
+        usd_ends.append(usd_end)
     exit_spread = params['exit_spread']
     final_try = params['final_try']
     swift_fee = params['swift_fee_usd']
@@ -245,10 +268,56 @@ def create_payoff_diagram(params: dict, spot_range: tuple = None) -> go.Figure:
         showarrow=False,
         font=dict(color=COLORS['info']),
     )
+    fig.add_hline(y=rf_return, line_dash="dash", line_color=COLORS['tbill'])
+    fig.add_annotation(
+        xref='paper',
+        x=0.98,
+        align='right',
+        y=rf_return,
+        text=f"T-Bill: {rf_return:.2f}%",
+        showarrow=False,
+        font=dict(color=COLORS['tbill']),
+    )
+
+    # Break-even line
+    fig.add_vline(x=spot_be, line_dash="dash", line_color=COLORS['breakeven'])
+    fig.add_annotation(
+        xref='paper',
+        x=0.98,
+        align='right',
+        y=spot_be,
+        text=f"Break-even: {spot_be:.2f}",
+        showarrow=False,
+        font=dict(color=COLORS['breakeven']),
+    )
+
+    # Entry spot
+    fig.add_vline(x=params['spot_entry'], line_dash="dot", line_color=COLORS['info'])
+    fig.add_annotation(
+        xref='paper',
+        x=0.02,
+        align='left',
+        y=params['spot_entry'],
+        text=f"Entry: {params['spot_entry']:.2f}",
+        showarrow=False,
+        font=dict(color=COLORS['info']),
+    )
 
     # Zero line
     fig.add_hline(y=0, line_color=COLORS['text_muted'], line_width=1)
 
+    x_min = min(spot_range[0], params['spot_entry'], spot_be)
+    x_max = max(spot_range[1], params['spot_entry'], spot_be)
+
+    fig.update_layout(
+        title={
+            'text': 'Payoff Diagram: Return vs USD/TRY at Maturity',
+            'font': {'size': 16},
+        },
+        xaxis_title='USD/TRY Spot at Maturity',
+        xaxis_range=[x_min, x_max],
+        yaxis_title='Return vs Baseline (%)',
+        height=500,
     x_min = min(spot_range[0], params['spot_entry'], spot_be)
     x_max = max(spot_range[1], params['spot_entry'], spot_be)
 
@@ -288,6 +357,15 @@ def create_mc_distribution(mc_results: dict, show_excess: bool = True) -> go.Fig
         cvar_95 = mc_results['cvar_95_excess']
         prob_loss = mc_results['prob_underperform_tbill']
         loss_label = 'Underperform T-Bill'
+    else:
+        data = mc_results['ret_vs_baseline']
+        title = 'Monte Carlo: Return vs Baseline Distribution'
+        xlabel = 'Return vs Baseline (%)'
+        mean_val = mc_results['mean_ret']
+        var_95 = mc_results['var_95_ret']
+        cvar_95 = mc_results['cvar_95_ret']
+        prob_loss = mc_results['prob_loss_vs_baseline']
+        loss_label = 'Loss'
     else:
         data = mc_results['ret_vs_baseline']
         title = 'Monte Carlo: Return vs Baseline Distribution'
@@ -405,6 +483,44 @@ def create_historical_chart(spot_series: pd.Series, params: dict) -> go.Figure:
     # Calculate Y-axis range to include entry, break-even, and bank rate
     y_min = min(spot_series.min(), params['spot_entry'], params['spot_be'], params['entry_bank_rate']) * 0.98
     y_max = max(spot_series.max(), params['spot_entry'], params['spot_be'], params['entry_bank_rate']) * 1.02
+    fig.add_hline(y=params['spot_entry'], line_dash="dash", line_color=COLORS['info'])
+    fig.add_annotation(
+        xref='paper',
+        x=0.98,
+        align='right',
+        y=params['spot_entry'],
+        text=f"Entry Spot: {params['spot_entry']:.2f}",
+        showarrow=False,
+        font=dict(color=COLORS['info']),
+    )
+
+    # Break-even line
+    fig.add_hline(y=params['spot_be'], line_dash="dash", line_color=COLORS['breakeven'])
+    fig.add_annotation(
+        xref='paper',
+        x=0.98,
+        align='right',
+        y=params['spot_be'],
+        text=f"Break-even: {params['spot_be']:.2f}",
+        showarrow=False,
+        font=dict(color=COLORS['breakeven']),
+    )
+
+    # Entry bank rate line
+    fig.add_hline(y=params['entry_bank_rate'], line_dash="dot", line_color=COLORS['tbill'])
+    fig.add_annotation(
+        xref='paper',
+        x=0.98,
+        align='right',
+        y=params['entry_bank_rate'],
+        text=f"Entry Bank Rate: {params['entry_bank_rate']:.2f}",
+        showarrow=False,
+        font=dict(color=COLORS['tbill']),
+    )
+
+    # Calculate Y-axis range to include entry, break-even, and bank rate
+    y_min = min(spot_series.min(), params['spot_entry'], params['spot_be'], params['entry_bank_rate']) * 0.98
+    y_max = max(spot_series.max(), params['spot_entry'], params['spot_be'], params['entry_bank_rate']) * 1.02
 
     fig.update_layout(
         title={
@@ -441,6 +557,7 @@ def create_backtest_chart(backtest_results: dict) -> go.Figure:
         rows=1, cols=2,
         subplot_titles=(
             'Return vs Baseline (%)',
+            'Return vs Baseline (%)',
             'Excess Return vs T-Bill (%)'
         )
     )
@@ -448,6 +565,7 @@ def create_backtest_chart(backtest_results: dict) -> go.Figure:
     # Return vs Convert histogram
     fig.add_trace(
         go.Histogram(
+            x=data['ret_vs_baseline'],
             x=data['ret_vs_baseline'],
             nbinsx=50,
             marker_color=COLORS['neutral'],
@@ -559,11 +677,16 @@ def create_kpi_cards_html(params: dict, mc_results: dict = None) -> str:
     Generate HTML for KPI cards.
     """
     usd0 = params['usd0_baseline']
+    usd0 = params['usd0_baseline']
     usd_rf = params['usd_rf_end']
     spot_be = params['spot_be']
     be_move = params['be_move_pct']
 
     cards = [
+        ('USD Baseline', f"${usd0:,.2f}", 'Opportunity-cost baseline', COLORS['info']),
+        ('T-Bill End Value', f"${usd_rf:,.2f}", f"{params['usd_rf_rate_annual']*100:.1f}% for {params['term_days_calendar']}d", COLORS['tbill']),
+        ('Break-even Spot', f"{spot_be:.4f}", f"+{be_move:.2f}% from entry", COLORS['breakeven']),
+        ('Entry Spread', f"{params['entry_spread']*100:.2f}%", 'From entry vs spot', COLORS['text_secondary']),
         ('USD Baseline', f"${usd0:,.2f}", 'Opportunity-cost baseline', COLORS['info']),
         ('T-Bill End Value', f"${usd_rf:,.2f}", f"{params['usd_rf_rate_annual']*100:.1f}% for {params['term_days_calendar']}d", COLORS['tbill']),
         ('Break-even Spot', f"{spot_be:.4f}", f"+{be_move:.2f}% from entry", COLORS['breakeven']),
@@ -695,6 +818,7 @@ def export_charts_to_html(
     <body>
         <h1>{title}</h1>
         <p class="subtitle">Baseline = USD risk-free return over the same horizon</p>
+        <p class="subtitle">Baseline = USD risk-free return over the same horizon</p>
     ''']
 
     for name, fig in figs.items():
@@ -766,6 +890,28 @@ def create_realtime_pnl_chart(pnl_data: dict, spot_series: pd.Series) -> go.Figu
     ))
 
     # Entry spot line
+    fig.add_hline(y=pnl_data['entry_spot'], line_dash="dash", line_color=COLORS['info'])
+    fig.add_annotation(
+        xref='paper',
+        x=0.98,
+        align='right',
+        y=pnl_data['entry_spot'],
+        text=f"Entry: {pnl_data['entry_spot']:.4f}",
+        showarrow=False,
+        font=dict(color=COLORS['info']),
+    )
+
+    # Break-even line
+    fig.add_hline(y=pnl_data['spot_be'], line_dash="dash", line_color=COLORS['breakeven'])
+    fig.add_annotation(
+        xref='paper',
+        x=0.98,
+        align='right',
+        y=pnl_data['spot_be'],
+        text=f"Break-even: {pnl_data['spot_be']:.4f}",
+        showarrow=False,
+        font=dict(color=COLORS['breakeven']),
+    )
     fig.add_hline(y=pnl_data['entry_spot'], line_dash="dash", line_color=COLORS['info'])
     fig.add_annotation(
         xref='paper',
@@ -899,6 +1045,41 @@ def create_trend_chart(spot_series: pd.Series, trend_data: dict, days_remaining:
         height=400,
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
     )
+    y_min = min(recent.min(), min(projection_spots))
+    y_max = max(recent.max(), max(projection_spots))
+    padding = (y_max - y_min) * 0.05 if y_max > y_min else 0.1
+
+    fig.update_layout(
+        title={
+            'text': f"Trend Analysis (R²={trend_data['r_squared']:.3f})<br>"
+                    f"<sub>Slope: {trend_data['slope_pct_daily']:.3f}%/day | "
+                    f"Regime: <span style='color:{accel_color}'>{trend_data['accel_regime']}</span></sub>",
+            'font': {'size': 14},
+        },
+        xaxis_title='Date',
+        yaxis_title='USD/TRY',
+        yaxis_range=[y_min - padding, y_max + padding],
+        height=400,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+    )
+    # Calculate Y-axis range to include all points (historical, trend, projection)
+    all_y_values = list(recent.values) + list(trend_y) + projection_spots
+    y_min = min(all_y_values) * 0.995
+    y_max = max(all_y_values) * 1.005
+
+    fig.update_layout(
+        title={
+            'text': f"Trend Analysis (R²={trend_data['r_squared']:.3f})<br>"
+                    f"<sub>Slope: {trend_data['slope_pct_daily']:.3f}%/day | "
+                    f"Regime: <span style='color:{accel_color}'>{trend_data['accel_regime']}</span></sub>",
+            'font': {'size': 14},
+        },
+        xaxis_title='Date',
+        yaxis_title='USD/TRY',
+        yaxis_range=[y_min, y_max],
+        height=400,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+    )
 
     return apply_dark_theme(fig)
 
@@ -954,6 +1135,10 @@ def create_cushion_gauge(cushion_data: dict) -> go.Figure:
 def create_cushion_timeline(cushion_data: dict, trend_data: dict) -> go.Figure:
     """
     Create timeline showing cushion erosion at current trend.
+
+    Handles cases where:
+    - days_to_be > days_remaining (BE beyond maturity - extend x-axis)
+    - days_to_be < days_remaining (BE before maturity - show clearly)
     """
     days_remaining = cushion_data['days_remaining']
     current_spot = cushion_data['spot_current']
@@ -967,11 +1152,32 @@ def create_cushion_timeline(cushion_data: dict, trend_data: dict) -> go.Figure:
         max_day = max(max_day, int(np.ceil(days_to_be)))
     max_day += 5
     days = list(range(0, max_day + 1))
+    days_to_be = cushion_data['days_until_breakeven']
+    max_day = days_remaining
+    if days_to_be < float('inf') and days_to_be > 0:
+        max_day = max(max_day, int(np.ceil(days_to_be)))
+    max_day += 5
+    days = list(range(0, max_day + 1))
+    days_remaining = cushion_data['days_remaining']
+    current_spot = cushion_data['spot_current']
+    spot_be = cushion_data['spot_be']
+    daily_move = trend_data['slope_daily']
+    days_to_be = cushion_data['days_until_breakeven']
+
+    # Determine x-axis range: extend to include BE day if needed
+    if days_to_be < float('inf') and days_to_be > 0:
+        # If BE is beyond maturity, extend x-axis to show it
+        x_max = max(days_remaining + 5, int(days_to_be) + 5)
+    else:
+        x_max = days_remaining + 5
+
+    # Generate projection
+    days = list(range(0, x_max + 1))
     projected_spots = [current_spot + daily_move * d for d in days]
 
     fig = go.Figure()
 
-    # Projected path
+    # Projected path - color based on whether above or below BE
     colors = [COLORS['profit'] if s < spot_be else COLORS['loss'] for s in projected_spots]
 
     fig.add_trace(go.Scatter(
@@ -980,7 +1186,8 @@ def create_cushion_timeline(cushion_data: dict, trend_data: dict) -> go.Figure:
         mode='lines+markers',
         name='Projected Spot',
         line=dict(color=COLORS['neutral'], width=2),
-        marker=dict(color=colors, size=8),
+        marker=dict(color=colors, size=6),
+        hovertemplate='Day %{x}<br>Projected: %{y:.4f}<extra></extra>',
     ))
 
     # Break-even line
@@ -1039,6 +1246,112 @@ def create_cushion_timeline(cushion_data: dict, trend_data: dict) -> go.Figure:
         height=400,
         showlegend=False,
     )
+    fig.add_hline(y=spot_be, line_dash="dash", line_color=COLORS['breakeven'])
+    fig.add_annotation(
+        xref='paper',
+        x=0.98,
+        align='right',
+        y=spot_be,
+        text=f"Break-even: {spot_be:.4f}",
+        showarrow=False,
+        font=dict(color=COLORS['breakeven']),
+    )
+    # Break-even line (always visible - key requirement)
+    fig.add_hline(
+        y=spot_be,
+        line_dash="dash",
+        line_color=COLORS['breakeven'],
+        annotation_text=f"Break-even: {spot_be:.4f}",
+        annotation_position="right",
+    )
+
+    # Maturity line
+    fig.add_vline(x=days_remaining, line_dash="dot", line_color=COLORS['info'])
+    fig.add_annotation(
+        xref='paper',
+        x=0.98,
+        align='right',
+        y=projected_spots[min(days_remaining, len(projected_spots) - 1)],
+        text=f"Maturity: Day {days_remaining}",
+        showarrow=False,
+        font=dict(color=COLORS['info']),
+    )
+
+    # Days until BE annotation
+    if days_to_be < float('inf') and days_to_be > 0:
+        fig.add_vline(x=days_to_be, line_dash="dot", line_color=COLORS['loss'])
+        fig.add_annotation(
+            xref='paper',
+            x=0.98,
+            align='right',
+            y=spot_be,
+            text=f"Hits BE: Day {days_to_be:.0f}",
+            showarrow=False,
+            font=dict(color=COLORS['loss']),
+        )
+
+    # Calculate Y-axis range to include break-even and all projected spots
+    y_min = min(min(projected_spots), spot_be, current_spot)
+    y_max = max(max(projected_spots), spot_be, current_spot)
+    padding = (y_max - y_min) * 0.02 if y_max > y_min else 0.05
+
+    fig.update_layout(
+        title={
+            'text': f"Cushion Erosion at Current Trend<br>"
+                    f"<sub>Daily Cushion: {cushion_data['daily_cushion_pct']:.3f}%/day | "
+                    f"Daily Trend: {trend_data['slope_pct_daily']:.3f}%/day</sub>",
+            'font': {'size': 14},
+        },
+        xaxis_title='Days from Now',
+        yaxis_title='Projected USD/TRY',
+        xaxis_range=[0, max_day],
+        yaxis_range=[y_min - padding, y_max + padding],
+        height=400,
+        showlegend=False,
+    )
+    be_annotation = ""
+    if days_to_be < float('inf') and days_to_be > 0:
+        if days_to_be > days_remaining:
+            # BE beyond maturity - still show it
+            be_annotation = f" (BE beyond maturity: Day {days_to_be:.0f})"
+            fig.add_vline(
+                x=days_to_be,
+                line_dash="dot",
+                line_color=COLORS['loss'],
+                annotation_text=f"Hits BE: Day {days_to_be:.0f}",
+                annotation_position="top",
+            )
+        else:
+            # BE before maturity - show prominently
+            fig.add_vline(
+                x=days_to_be,
+                line_dash="dot",
+                line_color=COLORS['loss'],
+                annotation_text=f"DANGER: Hits BE Day {days_to_be:.0f}",
+                annotation_position="top",
+            )
+    elif days_to_be == float('inf') and daily_move <= 0:
+        be_annotation = " (Favorable trend - never hits BE)"
+
+    # Calculate Y-axis range to include break-even and all projected spots
+    # Ensure adequate padding so lines are never clipped
+    all_y_values = projected_spots + [spot_be, current_spot]
+    y_min = min(all_y_values) * 0.995
+    y_max = max(all_y_values) * 1.005
+
+    fig.update_layout(
+        title={
+            'text': f"Cushion Erosion at Current Trend<br>"
+                    f"<sub>Daily Cushion: {cushion_data['daily_cushion_pct']:.3f}%/day | "
+                    f"Daily Trend: {trend_data['slope_pct_daily']:.3f}%/day{be_annotation}</sub>",
+            'font': {'size': 14},
+        },
+        xaxis_title='Days from Now',
+        yaxis_title='Projected USD/TRY',
+        yaxis_range=[y_min, y_max],
+        height=400,
+        showlegend=False,
+    )
 
     return apply_dark_theme(fig)
 
@@ -1093,6 +1406,130 @@ def create_realtime_kpi_html(pnl_data: dict, cushion_data: dict, trend_data: dic
 
     html += '</div>'
     return html
+
+
+def create_rolling_volatility_chart(vol_df: pd.DataFrame, spot_series: pd.Series) -> go.Figure:
+    """
+    Create rolling volatility chart with regime classification.
+
+    Args:
+        vol_df: DataFrame with 'rolling_vol', 'regime', 'vol_33_threshold', 'vol_67_threshold'
+        spot_series: Spot price series for dual-axis
+
+    Returns:
+        Plotly figure with rolling vol and regime bands
+    """
+    fig = make_subplots(
+        rows=2, cols=1,
+        row_heights=[0.7, 0.3],
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=("Rolling 60-Day Annualized Volatility", "USD/TRY Spot")
+    )
+
+    # Get thresholds
+    vol_33 = vol_df['vol_33_threshold'].iloc[0] if 'vol_33_threshold' in vol_df.columns else vol_df['rolling_vol'].quantile(0.33)
+    vol_67 = vol_df['vol_67_threshold'].iloc[0] if 'vol_67_threshold' in vol_df.columns else vol_df['rolling_vol'].quantile(0.67)
+
+    # Regime colors
+    regime_colors = {
+        'LOW': COLORS['profit'],
+        'MEDIUM': COLORS['warning'],
+        'HIGH': COLORS['loss'],
+        None: COLORS['neutral'],
+    }
+
+    # Rolling volatility line with color by regime
+    valid_vol = vol_df['rolling_vol'].dropna()
+
+    for regime in ['LOW', 'MEDIUM', 'HIGH']:
+        mask = vol_df['regime'] == regime
+        if mask.any():
+            regime_data = vol_df[mask]
+            fig.add_trace(
+                go.Scatter(
+                    x=regime_data.index,
+                    y=regime_data['rolling_vol'],
+                    mode='markers',
+                    name=f'{regime} Vol',
+                    marker=dict(color=regime_colors[regime], size=4),
+                    hovertemplate='%{x}<br>Vol: %{y:.1f}%<br>Regime: ' + regime + '<extra></extra>',
+                    showlegend=True,
+                ),
+                row=1, col=1
+            )
+
+    # Add threshold lines
+    fig.add_hline(
+        y=vol_33,
+        line_dash="dash",
+        line_color=COLORS['profit'],
+        annotation_text=f"LOW/MED: {vol_33:.1f}%",
+        annotation_position="right",
+        row=1, col=1
+    )
+
+    fig.add_hline(
+        y=vol_67,
+        line_dash="dash",
+        line_color=COLORS['loss'],
+        annotation_text=f"MED/HIGH: {vol_67:.1f}%",
+        annotation_position="right",
+        row=1, col=1
+    )
+
+    # Current regime annotation
+    if len(valid_vol) > 0:
+        current_vol = valid_vol.iloc[-1]
+        current_regime = vol_df['regime'].iloc[-1]
+        fig.add_annotation(
+            x=valid_vol.index[-1],
+            y=current_vol,
+            text=f"Current: {current_vol:.1f}% ({current_regime})",
+            showarrow=True,
+            arrowhead=2,
+            arrowcolor=regime_colors.get(current_regime, COLORS['neutral']),
+            font=dict(color=regime_colors.get(current_regime, COLORS['neutral'])),
+            row=1, col=1
+        )
+
+    # Spot series (bottom panel)
+    spot_aligned = spot_series[spot_series.index.isin(vol_df.index)]
+    fig.add_trace(
+        go.Scatter(
+            x=spot_aligned.index,
+            y=spot_aligned.values,
+            mode='lines',
+            name='USD/TRY',
+            line=dict(color=COLORS['neutral'], width=1),
+            hovertemplate='%{x}<br>Spot: %{y:.4f}<extra></extra>',
+            showlegend=False,
+        ),
+        row=2, col=1
+    )
+
+    # Layout
+    fig.update_layout(
+        height=600,
+        title={
+            'text': "Volatility Regime Analysis<br>"
+                    f"<sub>33rd percentile: {vol_33:.1f}% | 67th percentile: {vol_67:.1f}%</sub>",
+            'font': {'size': 14},
+        },
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5
+        ),
+    )
+
+    fig.update_yaxes(title_text="Annualized Vol (%)", row=1, col=1)
+    fig.update_yaxes(title_text="USD/TRY", row=2, col=1)
+    fig.update_xaxes(title_text="Date", row=2, col=1)
+
+    return apply_dark_theme(fig)
 
 
 if __name__ == "__main__":
