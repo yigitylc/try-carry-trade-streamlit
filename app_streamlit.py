@@ -7,6 +7,15 @@ Run with:
 """
 
 import logging
+import sys
+from pathlib import Path
+from datetime import datetime, date
+
+import numpy as np
+
+APP_ROOT = Path(__file__).resolve().parent
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 import numpy as np
 from datetime import datetime, date
 

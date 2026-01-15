@@ -17,6 +17,13 @@ Variables:
 - usd_end: Carry trade outcome = final_try / bank_rate_end - swift_fee
 - bank_rate_be: Break-even bank rate where carry = T-bill
 - pnl_vs_baseline: usd_end - usd0_baseline
+
+Variables:
+- usd0_baseline: USD baseline at entry
+- usd_rf_end: T-bill end value = usd0_baseline * (1 + rf * T)
+- usd_end: Carry trade outcome = final_try / bank_rate_end - swift_fee
+- bank_rate_be: Break-even bank rate where carry = T-bill
+- pnl_vs_baseline: usd_end - usd0_baseline
 DUAL MODE SUPPORT:
 1) TRY Holder Mode: Start with TRY, want USD eventually
    - Baseline = Convert at entry_bank_rate_try_to_usd + T-bill
@@ -50,6 +57,8 @@ warnings.filterwarnings('ignore')
 TRADING_DAYS_PER_YEAR = 252
 CALENDAR_DAYS_PER_YEAR = 365
 
+
+@dataclass
 
 # ============================================================================
 # MODE 1: TRY HOLDER (start with TRY, want USD)
@@ -263,6 +272,8 @@ class TryHolderParams:
     include_swift_in_baseline: bool = False
     bank_rate_end_override: Optional[float] = None
 
+    bank_rate_end_override: Optional[float] = None
+
 class TradeParams:
     """
     Trade parameters - LEGACY COMPATIBILITY wrapper.
@@ -322,6 +333,8 @@ class UsdHolderParams:
     exit_spread: float
     use_compound_interest: bool = False
     bank_rate_end_override: Optional[float] = None
+
+
 
 
 @dataclass
@@ -395,6 +408,120 @@ def compute_try_holder_metrics(params: TryHolderParams) -> TradeMetrics:
     usd0_baseline = params.principal_try / params.entry_bank_rate_try_to_usd
     if params.include_swift_in_baseline:
         usd0_baseline -= params.swift_fee_usd
+
+    if params.use_compound_interest:
+        usd_rf_end = usd0_baseline * (1 + params.usd_rf_rate_annual) ** term_years
+    else:
+        usd_rf_end = usd0_baseline * (1 + params.usd_rf_rate_annual * term_years)
+
+    rf_return_period = usd_rf_end / usd0_baseline - 1
+
+    bank_rate_be = final_try / (usd_rf_end + params.swift_fee_usd)
+    spot_be = bank_rate_be / (1 + params.exit_spread)
+    be_move_pct = (spot_be / params.spot_entry - 1) * 100
+
+    entry_spread = params.entry_bank_rate_try_to_usd / params.spot_entry - 1
+
+    maturity_date = params.start_date + timedelta(days=params.term_days_calendar)
+
+    return TradeMetrics(
+        mode="try_holder",
+        principal_try=params.principal_try,
+        principal_usd=usd0_baseline,
+        entry_bank_rate=params.entry_bank_rate_try_to_usd,
+        entry_spread=entry_spread,
+        spot_entry=params.spot_entry,
+        start_date=params.start_date,
+        maturity_date=maturity_date,
+        term_days_calendar=params.term_days_calendar,
+        term_years=term_years,
+        deposit_rate_annual=params.deposit_rate_annual,
+        stopaj_rate=params.stopaj_rate,
+        net_deposit_rate_annual=params.deposit_rate_annual * (1 - params.stopaj_rate),
+        gross_interest=gross_interest,
+        net_interest=net_interest,
+        final_try=final_try,
+        swift_fee_usd=params.swift_fee_usd,
+        usd_rf_rate_annual=params.usd_rf_rate_annual,
+        usd0_baseline=usd0_baseline,
+        usd_rf_end=usd_rf_end,
+        rf_return_period=rf_return_period,
+        use_compound_interest=params.use_compound_interest,
+        exit_spread=params.exit_spread,
+        bank_rate_end_override=params.bank_rate_end_override,
+        bank_rate_be=bank_rate_be,
+        spot_be=spot_be,
+        be_move_pct=be_move_pct,
+        include_swift_in_baseline=params.include_swift_in_baseline,
+    )
+
+
+def compute_usd_holder_metrics(params: UsdHolderParams) -> TradeMetrics:
+    """Compute metrics for USD-holder mode."""
+    term_years = params.term_days_calendar / CALENDAR_DAYS_PER_YEAR
+    principal_try = params.principal_usd * params.entry_bank_rate_usd_to_try
+    gross_interest, _, net_interest, final_try = _compute_interest(
+        principal_try,
+        params.deposit_rate_annual,
+        params.stopaj_rate,
+        term_years,
+    )
+
+    usd0_baseline = params.principal_usd
+
+    if params.use_compound_interest:
+        usd_rf_end = usd0_baseline * (1 + params.usd_rf_rate_annual) ** term_years
+    else:
+        usd_rf_end = usd0_baseline * (1 + params.usd_rf_rate_annual * term_years)
+
+    rf_return_period = usd_rf_end / usd0_baseline - 1
+
+    bank_rate_be = final_try / (usd_rf_end + params.swift_fee_usd)
+    spot_be = bank_rate_be / (1 + params.exit_spread)
+    be_move_pct = (spot_be / params.spot_entry - 1) * 100
+
+    entry_spread = params.entry_bank_rate_usd_to_try / params.spot_entry - 1
+
+    maturity_date = params.start_date + timedelta(days=params.term_days_calendar)
+
+    return TradeMetrics(
+        mode="usd_holder",
+        principal_try=principal_try,
+        principal_usd=params.principal_usd,
+        entry_bank_rate=params.entry_bank_rate_usd_to_try,
+        entry_spread=entry_spread,
+        spot_entry=params.spot_entry,
+        start_date=params.start_date,
+        maturity_date=maturity_date,
+        term_days_calendar=params.term_days_calendar,
+        term_years=term_years,
+        deposit_rate_annual=params.deposit_rate_annual,
+        stopaj_rate=params.stopaj_rate,
+        net_deposit_rate_annual=params.deposit_rate_annual * (1 - params.stopaj_rate),
+        gross_interest=gross_interest,
+        net_interest=net_interest,
+        final_try=final_try,
+        swift_fee_usd=params.swift_fee_usd,
+        usd_rf_rate_annual=params.usd_rf_rate_annual,
+        usd0_baseline=usd0_baseline,
+        usd_rf_end=usd_rf_end,
+        rf_return_period=rf_return_period,
+        use_compound_interest=params.use_compound_interest,
+        exit_spread=params.exit_spread,
+        bank_rate_end_override=params.bank_rate_end_override,
+        bank_rate_be=bank_rate_be,
+        spot_be=spot_be,
+        be_move_pct=be_move_pct,
+        include_swift_in_baseline=False,
+    )
+
+
+class CarryTradeModel:
+    """Models TRY carry trade outcomes for either mode."""
+
+    def __init__(self, metrics: TradeMetrics):
+        self.metrics = metrics
+
 
     if params.use_compound_interest:
         usd_rf_end = usd0_baseline * (1 + params.usd_rf_rate_annual) ** term_years
@@ -757,6 +884,12 @@ def _to_business_days(spot_series: pd.Series) -> pd.Series:
     if spot_series.index.tz is not None:
         spot_series = spot_series.tz_localize(None)
     return spot_series.asfreq('B').ffill().dropna()
+
+
+def calibrate_gbm(spot_series: pd.Series, regime_days: Optional[int] = None) -> Dict:
+    """Calibrate GBM parameters from business-day data."""
+    spot_series = _to_business_days(spot_series)
+
 
 
 def calibrate_gbm(spot_series: pd.Series, regime_days: Optional[int] = None) -> Dict:

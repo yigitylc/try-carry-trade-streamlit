@@ -408,6 +408,10 @@ def generate_realtime_report(
     pnl: RealTimePnL,
     trend: TrendAnalysis,
     cushion: DailyCushion
+def generate_realtime_report(
+    pnl: RealTimePnL,
+    trend: TrendAnalysis,
+    cushion: DailyCushion
 def compute_adjusted_expected_return(
     params: Union[TradeParams, TRYHolderParams, USDHolderParams],
     trend: TrendAnalysis,
